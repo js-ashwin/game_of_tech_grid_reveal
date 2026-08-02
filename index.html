@@ -76,6 +76,7 @@
 
       /* Glassmorphism Card Container */
       .container {
+        position: relative;
         background: var(--container-bg);
         backdrop-filter: blur(16px);
         -webkit-backdrop-filter: blur(16px);
@@ -89,10 +90,58 @@
         flex-direction: column;
         align-items: center;
         gap: 16px;
+        overflow: hidden;
         transition:
           background 0.3s ease,
           border-color 0.3s ease,
           box-shadow 0.3s ease;
+      }
+
+      /* Countdown Screen Overlay */
+      .countdown-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(15, 23, 42, 0.85);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 100;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.3s ease;
+      }
+
+      .countdown-overlay.active {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      .countdown-text {
+        font-size: 5.5rem;
+        font-weight: 900;
+        color: #38bdf8;
+        text-shadow: 0 0 25px rgba(56, 189, 248, 0.6);
+        animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      }
+
+      @keyframes popIn {
+        0% {
+          transform: scale(0.2);
+          opacity: 0;
+        }
+        50% {
+          transform: scale(1.2);
+          opacity: 1;
+        }
+        100% {
+          transform: scale(1);
+          opacity: 1;
+        }
       }
 
       /* Upload Screen Styling */
@@ -137,10 +186,12 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
+        gap: 8px;
         font-weight: 600;
         font-size: 0.9rem;
         letter-spacing: 0.5px;
         color: var(--header-text);
+        margin-bottom: 4rem;
       }
 
       .header-bar_2 {
@@ -152,7 +203,6 @@
         font-size: 0.9rem;
         letter-spacing: 0.5px;
         color: var(--header-text);
-        padding-top: 1rem;
       }
 
       .badge {
@@ -220,7 +270,7 @@
       .logo-img {
         width: 90%;
         height: 90%;
-        object-fit: cover;
+        object-fit: contain;
         user-select: none;
         -webkit-user-drag: none;
         border-radius: 0.5rem;
@@ -285,6 +335,7 @@
         display: flex;
         flex-direction: column;
         gap: 10px;
+        margin-top: 4rem;
       }
 
       .btn-row {
@@ -365,9 +416,15 @@
   </head>
   <body>
     <div class="container">
+      <!-- 3-2-1 Countdown Overlay -->
+      <div id="countdown-overlay" class="countdown-overlay">
+        <div id="countdown-text" class="countdown-text">3</div>
+      </div>
+
       <!-- Header -->
       <div class="header-bar">
         <button id="btn-theme" class="theme-btn">☀️ Light</button>
+        <button id="btn-test-audio" class="theme-btn">🔊 Test Sound</button>
         <span class="badge" id="score-text">Revealed: 0</span>
       </div>
       <div class="header-bar_2">
@@ -452,6 +509,10 @@
       let isShuffleMode = false;
       let isDarkMode = false;
 
+      // Audio State
+      let audioCtx = null;
+      let lastTickTime = 0;
+
       // Animation tracking
       let tilesArray = [];
       let randomizedIndices = [];
@@ -475,6 +536,168 @@
       const btnShuffle = document.getElementById("btn-shuffle");
       const btnRestart = document.getElementById("btn-restart");
       const btnTheme = document.getElementById("btn-theme");
+      const btnTestAudio = document.getElementById("btn-test-audio");
+      const countdownOverlay = document.getElementById("countdown-overlay");
+      const countdownText = document.getElementById("countdown-text");
+
+      // Audio Helper - ensures AudioContext is resumed on user gesture
+      async function initAudio() {
+        if (!audioCtx) {
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtx.state !== "running") {
+          await audioCtx.resume();
+        }
+      }
+
+      // Audio: Standalone verification beep
+      async function testAudio() {
+        await initAudio();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+
+        osc.type = "sine";
+        osc.frequency.value = 600;
+        gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.3);
+      }
+
+      // Audio: Countdown SFX
+      async function playCountdownBeep(isGo = false) {
+        await initAudio();
+        if (!audioCtx) return;
+
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+
+        osc.type = "sine";
+        // Frequency is 440Hz for "3, 2, 1" and higher pitch 880Hz for "GO!"
+        osc.frequency.value = isGo ? 880 : 440;
+
+        gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(
+          0.001,
+          audioCtx.currentTime + (isGo ? 0.35 : 0.18),
+        );
+
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+
+        osc.start();
+        osc.stop(audioCtx.currentTime + (isGo ? 0.35 : 0.18));
+      }
+
+      // Countdown Sequence at start of game
+      async function runCountdown() {
+        countdownOverlay.classList.add("active");
+        const steps = ["3", "2", "1", "GO!"];
+
+        for (let i = 0; i < steps.length; i++) {
+          const step = steps[i];
+          const isGo = step === "GO!";
+
+          countdownText.textContent = step;
+          countdownText.style.animation = "none";
+          void countdownText.offsetWidth; // Trigger reflow for animation restart
+          countdownText.style.animation =
+            "popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275)";
+
+          playCountdownBeep(isGo);
+
+          await new Promise((resolve) => setTimeout(resolve, isGo ? 500 : 700));
+        }
+
+        countdownOverlay.classList.remove("active");
+      }
+
+      // Audio: Softer, dramatic pop/tink sound with rate throttling
+      function playTick() {
+        if (!audioCtx || audioCtx.state !== "running") return;
+
+        const now = performance.now();
+        // Throttle to avoid audio processing clutter
+        if (now - lastTickTime < 28) return;
+        lastTickTime = now;
+
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+
+        // Dramatic soft pitch decay from base frequency down
+        const baseFreq = 400 + (currentTileIndex / TOTAL_TILES) * 550;
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(baseFreq, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(
+          baseFreq * 0.45,
+          audioCtx.currentTime + 0.025,
+        );
+
+        // Softened volume down to 0.035 for a subtle dramatic sound
+        gain.gain.setValueAtTime(0.035, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(
+          0.0001,
+          audioCtx.currentTime + 0.025,
+        );
+
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.025);
+      }
+
+      // Audio: Card Swoosh Transition Sound
+      async function playSwoosh() {
+        await initAudio();
+        if (!audioCtx) return;
+
+        const bufferSize = audioCtx.sampleRate * 0.15; // 150ms noise
+        const buffer = audioCtx.createBuffer(
+          1,
+          bufferSize,
+          audioCtx.sampleRate,
+        );
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+          data[i] = Math.random() * 2 - 1;
+        }
+
+        const noise = audioCtx.createBufferSource();
+        noise.buffer = buffer;
+
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = "bandpass";
+        filter.Q.value = 1.5;
+
+        // Sweep filter cutoff to produce a wind/swoosh effect
+        filter.frequency.setValueAtTime(300, audioCtx.currentTime);
+        filter.frequency.exponentialRampToValueAtTime(
+          1800,
+          audioCtx.currentTime + 0.08,
+        );
+        filter.frequency.exponentialRampToValueAtTime(
+          200,
+          audioCtx.currentTime + 0.15,
+        );
+
+        const gain = audioCtx.createGain();
+        gain.gain.setValueAtTime(0.01, audioCtx.currentTime);
+        gain.gain.linearRampToValueAtTime(0.2, audioCtx.currentTime + 0.06);
+        gain.gain.exponentialRampToValueAtTime(
+          0.001,
+          audioCtx.currentTime + 0.15,
+        );
+
+        noise.connect(filter);
+        filter.connect(gain);
+        gain.connect(audioCtx.destination);
+
+        noise.start();
+      }
 
       function buildGrid() {
         gridOverlay.innerHTML = "";
@@ -490,7 +713,7 @@
         return filename.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " ");
       }
 
-      function handleFiles(files) {
+      async function handleFiles(files) {
         const imageFiles = Array.from(files).filter((file) =>
           file.type.startsWith("image/"),
         );
@@ -511,6 +734,9 @@
 
         buildGrid();
         loadCurrentSlide();
+
+        // Run the 3-2-1 countdown overlay only at the initial start of the game
+        await runCountdown();
       }
 
       function loadCurrentSlide() {
@@ -526,7 +752,6 @@
         const currentItem = currentPlaylist[currentIndex];
         logoImg.src = currentItem.src;
 
-        // Immediately hide and clear the text label so it doesn't leak or animate out
         logoNameEl.classList.remove("visible");
         logoNameEl.textContent = "";
 
@@ -551,6 +776,7 @@
               const tileIdx = randomizedIndices[currentTileIndex];
               tilesArray[tileIdx].classList.add("hidden");
               currentTileIndex++;
+              playTick();
             }
           }
           lastTileTime = timestamp;
@@ -563,10 +789,12 @@
         }
       }
 
-      function startReveal() {
+      async function startReveal() {
         if (isRevealed || isAnimating) return;
 
+        await initAudio();
         isAnimating = true;
+
         gridOverlay.style.background = "transparent";
 
         for (let tile of tilesArray) {
@@ -611,7 +839,6 @@
         btnReveal.style.display = "block";
         btnReveal.disabled = true;
 
-        // Set text and reveal only when the animation completes
         logoNameEl.textContent = currentPlaylist[currentIndex].name;
         logoNameEl.classList.add("visible");
 
@@ -621,6 +848,7 @@
 
       function nextSlide() {
         if (currentIndex < currentPlaylist.length - 1) {
+          playSwoosh();
           currentIndex++;
           loadCurrentSlide();
         }
@@ -628,12 +856,14 @@
 
       function prevSlide() {
         if (currentIndex > 0) {
+          playSwoosh();
           currentIndex--;
           loadCurrentSlide();
         }
       }
 
       function toggleShuffle() {
+        playSwoosh();
         isShuffleMode = !isShuffleMode;
         btnShuffle.classList.toggle("btn-active", isShuffleMode);
 
@@ -662,6 +892,7 @@
           progressEl.textContent = "0 / 0";
           scoreEl.textContent = "Revealed: 0";
         } else {
+          playSwoosh();
           currentIndex = 0;
           revealedCount = 0;
           if (isShuffleMode) {
@@ -692,6 +923,7 @@
       btnShuffle.addEventListener("click", toggleShuffle);
       btnRestart.addEventListener("click", restartQuiz);
       btnTheme.addEventListener("click", toggleTheme);
+      btnTestAudio.addEventListener("click", testAudio);
 
       // Drag and Drop implementation
       const uploadBox = document.querySelector(".upload-box");
